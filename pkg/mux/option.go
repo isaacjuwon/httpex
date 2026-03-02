@@ -2,7 +2,7 @@ package mux
 
 import (
 	"github.com/isaacjuwon/httpex/pkg/core"
-	"github.com/isaacjuwon/httpex/pkg/errors"
+	httperr "github.com/isaacjuwon/httpex/pkg/errors"
 )
 
 // Option configures a [Mux].
@@ -13,8 +13,8 @@ func WithRenderer(r core.Renderer) Option {
 	return func(m *Mux) { m.renderer = r }
 }
 
-// WithErrorHandler sets a custom [errors.ErrorHandler].
-func WithErrorHandler(h errors.ErrorHandler) Option {
+// WithErrorHandler sets a custom [httperr.ErrorHandler].
+func WithErrorHandler(h httperr.ErrorHandler) Option {
 	return func(m *Mux) { m.errorHandler = h }
 }
 

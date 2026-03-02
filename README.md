@@ -28,7 +28,7 @@ import (
 	"net/http"
 
 	"github.com/isaacjuwon/httpex/pkg/core"
-	httperrors "github.com/isaacjuwon/httpex/pkg/errors"
+	httperr "github.com/isaacjuwon/httpex/pkg/errors"
 	"github.com/isaacjuwon/httpex/pkg/middleware"
 	"github.com/isaacjuwon/httpex/pkg/mux"
 	"github.com/isaacjuwon/httpex/pkg/shutdown"
@@ -47,42 +47,42 @@ func main() {
 
 	// Basic route
 	m.Get("/ping", func(c core.Context) error {
-		return c.JSON(200, map[string]string{"message": "pong"})
+		return c.JSON(http.StatusOK, map[string]string{"message": "pong"})
 	})
 
 	// Path parameters
 	m.Get("/users/:id", func(c core.Context) error {
 		id := c.Param("id")
-		return c.JSON(200, map[string]string{"user_id": id})
+		return c.JSON(http.StatusOK, map[string]string{"user_id": id})
 	})
 
 	// Error handling
 	m.Get("/error", func(c core.Context) error {
-		// Return standard errors. The default ErrorHandler wraps 
-		// it in a 500 Internal Server Error JSON response.
+		// Standard errors yield a generic 500 — raw messages are NOT forwarded
+		// to the client by the DefaultErrorHandler.
 		return errors.New("database connection failed")
 	})
 
 	// Custom HTTP Errors
 	m.Get("/notfound", func(c core.Context) error {
-		return httperrors.NewHTTPError(http.StatusNotFound, "resource missing")
+		return httperr.NewHTTPError(http.StatusNotFound, "resource missing")
 	})
 
 	// Grouping and Sub-routing
 	api := m.Group("/api/v1")
 	api.Use(middleware.BodyLimit(1 << 20)) // 1MB limit for this group
-	
+
 	api.Post("/upload", func(c core.Context) error {
 		// Generic Type-Safe Binding
 		type Payload struct {
 			Name string `json:"name"`
 		}
-		
+
 		payload, err := mux.BindValue[Payload](c)
 		if err != nil {
 			return err // Automatically yields 400 Bad Request
 		}
-		
+
 		return c.String(http.StatusCreated, "Created: "+payload.Name)
 	})
 
@@ -98,9 +98,9 @@ func main() {
 
 The `pkg/middleware` subpackage contains heavily audited, optional middlewares.
 
-- **`Logging()`** — Configurable structured request logging.
+- **`Logging()`** — Configurable structured request logging via `slog`. Use `middleware.WithLogLevel(slog.LevelDebug)` to tune verbosity.
 - **`Recovery()`** — Catches panics, logs stack traces, yields 500s.
-- **`Timeout(d)`** — Per-request context cancellation and 504 generation.
+- **`Timeout(d)`** — Injects a deadline context; handlers must propagate `c.Context()` to blocking I/O for cooperative cancellation.
 - **`RequestID()`** — Injects UUIDs into context chains and response headers.
 - **`BodyLimit(bytes)`** — Protection against massive payload attacks.
 - **`SecureHeaders()`** — Sane XSS, framing, and MIME-sniffing defaults.
@@ -114,5 +114,10 @@ Handling `SIGINT` and `SIGTERM` manually is boilerplate-heavy. `pkg/shutdown` pr
 shutdown.ListenAndServe(
     &http.Server{Addr: ":8080", Handler: mux},
     shutdown.WithTimeout(15 * time.Second),
+    // Callbacks receive context so they respect the shutdown deadline.
+    // All callbacks run concurrently and are panic-safe.
+    shutdown.WithOnShutdown(func(ctx context.Context) {
+        db.Close()
+    }),
 )
 ```

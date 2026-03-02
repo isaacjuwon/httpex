@@ -63,6 +63,8 @@ func (m *requestIDMiddleware) Wrap(next core.Handler) core.Handler {
 
 func defaultIDGenerator() string {
 	b := make([]byte, 16)
+	// crypto/rand.Read never returns an error since Go 1.20; it panics on
+	// catastrophic OS-level failure instead.
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

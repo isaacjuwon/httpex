@@ -7,7 +7,7 @@ import (
 	"github.com/isaacjuwon/httpex/pkg/core"
 )
 
-// SlogAdapter wraps a *slog.Logger to satisfy the httpex.Logger interface.
+// SlogAdapter wraps a *slog.Logger to satisfy the core.Logger interface.
 type SlogAdapter struct {
 	l *slog.Logger
 }
@@ -32,7 +32,7 @@ func (a *SlogAdapter) Error(msg string, attrs ...any) {
 	a.l.Error(msg, attrs...)
 }
 
-// Log logs a message at the given level.
-func (a *SlogAdapter) Log(ctx context.Context, level int, msg string, attrs ...any) {
-	a.l.Log(ctx, slog.Level(level), msg, attrs...)
+// Log logs a message at the given slog level.
+func (a *SlogAdapter) Log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	a.l.Log(ctx, level, msg, attrs...)
 }

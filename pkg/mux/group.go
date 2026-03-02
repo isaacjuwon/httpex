@@ -24,6 +24,11 @@ func (g *Group) Use(mws ...core.Middleware) {
 }
 
 // Handle registers a handler under this group's prefix.
+//
+// Group middleware is applied at registration time (unlike Mux-level
+// middleware which wraps at dispatch time). Consequently, any [Use] calls
+// made on this group after Handle returns will NOT apply to the registered
+// handler.
 func (g *Group) Handle(method, path string, h core.Handler) {
 	wrapped := h
 	for i := len(g.middlewares) - 1; i >= 0; i-- {

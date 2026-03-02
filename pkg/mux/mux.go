@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/isaacjuwon/httpex/pkg/core"
-	"github.com/isaacjuwon/httpex/pkg/errors"
+	httperr "github.com/isaacjuwon/httpex/pkg/errors"
 	"github.com/isaacjuwon/httpex/pkg/renderer"
 	"github.com/isaacjuwon/httpex/pkg/router"
 )
@@ -15,7 +15,7 @@ type Mux struct {
 	router           core.Router
 	middlewares      []core.Middleware
 	renderer         core.Renderer
-	errorHandler     errors.ErrorHandler
+	errorHandler     httperr.ErrorHandler
 	notFound         core.Handler
 	methodNotAllowed core.Handler
 	pool             sync.Pool
@@ -25,7 +25,7 @@ type Mux struct {
 func New(opts ...Option) *Mux {
 	m := &Mux{
 		renderer:     &renderer.JSONRenderer{},
-		errorHandler: errors.DefaultErrorHandler,
+		errorHandler: httperr.DefaultErrorHandler,
 	}
 
 	for _, o := range opts {
@@ -38,13 +38,13 @@ func New(opts ...Option) *Mux {
 
 	if m.notFound == nil {
 		m.notFound = core.HandlerFunc(func(c core.Context) error {
-			return errors.NewHTTPError(http.StatusNotFound)
+			return httperr.NewHTTPError(http.StatusNotFound)
 		})
 	}
 
 	if m.methodNotAllowed == nil {
 		m.methodNotAllowed = core.HandlerFunc(func(c core.Context) error {
-			return errors.NewHTTPError(http.StatusMethodNotAllowed)
+			return httperr.NewHTTPError(http.StatusMethodNotAllowed)
 		})
 	}
 
@@ -86,7 +86,6 @@ func (m *Mux) Use(mws ...core.Middleware) {
 func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := m.pool.Get().(*contextImpl)
 	c.reset(w, r, m.renderer)
-	c.pool = &m.pool
 	defer m.pool.Put(c)
 
 	handler, params, found := m.router.Find(r.Method, r.URL.Path)

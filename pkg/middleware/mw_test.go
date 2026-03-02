@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -18,9 +20,9 @@ func TestLogging(t *testing.T) {
 	logger := &testLogger{buf: &buf}
 
 	m := mux.New()
-	m.Use(Logging(WithLogger(logger), WithLogLevel(core.LevelInfo)))
+	m.Use(Logging(WithLogger(logger), WithLogLevel(slog.LevelInfo)))
 	m.Get("/logtest", func(c core.Context) error {
-		return c.String(200, "ok")
+		return c.String(http.StatusOK, "ok")
 	})
 
 	req := httptest.NewRequest("GET", "/logtest", nil)
@@ -49,8 +51,8 @@ func TestRecovery(t *testing.T) {
 	// This should not crash the test suite
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 500 {
-		t.Errorf("expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected %d, got %d", http.StatusInternalServerError, rec.Code)
 	}
 
 	logOutput := buf.String()
@@ -63,16 +65,21 @@ func TestTimeout(t *testing.T) {
 	m := mux.New()
 	m.Use(Timeout(50 * time.Millisecond))
 	m.Get("/slow", func(c core.Context) error {
-		time.Sleep(100 * time.Millisecond)
-		return c.String(200, "ok")
+		// Respect context cancellation so the timeout can fire.
+		select {
+		case <-c.Context().Done():
+			return nil
+		case <-time.After(100 * time.Millisecond):
+			return c.String(http.StatusOK, "ok")
+		}
 	})
 
 	req := httptest.NewRequest("GET", "/slow", nil)
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 504 {
-		t.Errorf("expected 504 Gateway Timeout, got %d", rec.Code)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("expected %d Gateway Timeout, got %d", http.StatusGatewayTimeout, rec.Code)
 	}
 }
 
@@ -82,17 +89,17 @@ func TestRequestID(t *testing.T) {
 	m.Get("/id", func(c core.Context) error {
 		id, ok := c.Get("request_id")
 		if !ok {
-			return c.String(500, "missing id in context")
+			return c.String(http.StatusInternalServerError, "missing id in context")
 		}
-		return c.String(200, id.(string))
+		return c.String(http.StatusOK, id.(string))
 	})
 
 	req := httptest.NewRequest("GET", "/id", nil)
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	id := rec.Header().Get("X-Request-ID")
 	if id == "" {
@@ -107,7 +114,7 @@ func TestSecureHeaders(t *testing.T) {
 	m := mux.New()
 	m.Use(SecureHeaders(WithCustomHeader("X-Custom", "test")))
 	m.Get("/secure", func(c core.Context) error {
-		return c.String(200, "secure")
+		return c.String(http.StatusOK, "secure")
 	})
 
 	req := httptest.NewRequest("GET", "/secure", nil)
@@ -127,7 +134,7 @@ func TestCORS(t *testing.T) {
 	m := mux.New()
 	m.Use(CORS(WithOrigins("https://example.com")))
 	m.Get("/cors", func(c core.Context) error {
-		return c.String(200, "cors")
+		return c.String(http.StatusOK, "cors")
 	})
 
 	// Preflight
@@ -136,8 +143,8 @@ func TestCORS(t *testing.T) {
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 204 {
-		t.Errorf("expected 204 No Content for preflight, got %d", rec.Code)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected %d No Content for preflight, got %d", http.StatusNoContent, rec.Code)
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") != "https://example.com" {
 		t.Errorf("missing origin header")
@@ -176,7 +183,7 @@ func (l *testLogger) Error(msg string, attrs ...any) {
 	l.buf.WriteString("\n")
 }
 
-func (l *testLogger) Log(ctx context.Context, level int, msg string, attrs ...any) {
+func (l *testLogger) Log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
 	l.buf.WriteString(msg)
 	for _, a := range attrs {
 		l.buf.WriteString(fmt.Sprintf(" %v", a))

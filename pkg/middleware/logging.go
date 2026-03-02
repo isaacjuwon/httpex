@@ -12,7 +12,7 @@ import (
 
 type loggingConfig struct {
 	logger core.Logger
-	level  int
+	level  slog.Level
 }
 
 // LoggingOption configures the [Logging] middleware.
@@ -23,8 +23,8 @@ func WithLogger(l core.Logger) LoggingOption {
 	return func(c *loggingConfig) { c.logger = l }
 }
 
-// WithLogLevel sets the log level for request logs.
-func WithLogLevel(lvl int) LoggingOption {
+// WithLogLevel sets the slog level for request logs (e.g. slog.LevelInfo).
+func WithLogLevel(lvl slog.Level) LoggingOption {
 	return func(c *loggingConfig) { c.level = lvl }
 }
 
@@ -36,7 +36,7 @@ type loggingMiddleware struct {
 func Logging(opts ...LoggingOption) core.Middleware {
 	cfg := loggingConfig{
 		logger: logger.NewDefaultLogger(),
-		level:  core.LevelInfo,
+		level:  slog.LevelInfo,
 	}
 	for _, o := range opts {
 		o(&cfg)

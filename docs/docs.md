@@ -17,36 +17,41 @@ go get github.com/isaacjuwon/httpex
 package main
 
 import (
-	"net/http"
-	"time"
-	
-	"github.com/isaacjuwon/httpex/pkg/core"
-	"github.com/isaacjuwon/httpex/pkg/middleware"
-	"github.com/isaacjuwon/httpex/pkg/mux"
-	"github.com/isaacjuwon/httpex/pkg/shutdown"
+    "context"
+    "net/http"
+    "time"
+
+    "github.com/isaacjuwon/httpex/pkg/core"
+    "github.com/isaacjuwon/httpex/pkg/middleware"
+    "github.com/isaacjuwon/httpex/pkg/mux"
+    "github.com/isaacjuwon/httpex/pkg/shutdown"
 )
 
 func main() {
     m := mux.New()
-    
+
     // Middlewares are executed left to right
     m.Use(
         middleware.RequestID(),
         middleware.Logging(),
         middleware.Recovery(),
     )
-    
+
     m.Get("/hello/:name", func(c core.Context) error {
-        return c.JSON(200, map[string]string{
+        return c.JSON(http.StatusOK, map[string]string{
             "message": "Hello, " + c.Param("name"),
         })
     })
 
     // ListenAndServe with graceful shutdown
-    shutdown.ListenAndServe(&http.Server{
-        Addr:    ":8080",
-        Handler: m,
-    })
+    shutdown.ListenAndServe(
+        &http.Server{Addr: ":8080", Handler: m},
+        shutdown.WithTimeout(10*time.Second),
+        // Callbacks now receive context so they respect the shutdown deadline
+        shutdown.WithOnShutdown(func(ctx context.Context) {
+            db.Close() // example cleanup
+        }),
+    )
 }
 ```
 
@@ -56,13 +61,15 @@ func main() {
 
 The `core.Context` interface is the heart of every request. The default implementation is pooled using `sync.Pool` to ensure **zero allocations** on the hot-path.
 
+The per-request context is stored directly on `contextImpl` — `SetContext` does **not** allocate a new `*http.Request`.
+
 ### 2.1 Reading Data
 - `c.Param("id")` — Path parameter from `/users/:id`
-- `c.Query("q")` — Query parameter `?q=search`
+- `c.Query("q")` — Query parameter `?q=search` *(lazily parsed once per request)*
 - `c.Header("Authorization")` — HTTP Header
 - `c.RealIP()` — Safely inspects `X-Forwarded-For`, `X-Real-Ip`, and `RemoteAddr`.
 
-### 2.2 Go 1.18 Generics (Type-Safe Binding & Storage)
+### 2.2 Go Generics (Type-Safe Binding & Storage)
 Instead of dealing with pointers and type-assertions, `httpex` uses generics:
 
 ```go
@@ -78,8 +85,8 @@ m.Post("/upload", func(c core.Context) error {
     if err != nil {
         return err // Automatically yields HTTP 400
     }
-    
-    return c.String(200, "Created: "+req.Email)
+
+    return c.String(http.StatusCreated, "Created: "+req.Email)
 })
 ```
 
@@ -91,78 +98,81 @@ c.Set("user_id", 42)
 
 // In handler:
 // Safely unpack it without `v.(int)` panics
-userId, ok := mux.Value[int](c, "user_id") 
+userId, ok := mux.Value[int](c, "user_id")
 ```
 
 ### 2.3 Wiring Responses
-- `c.String(200, "OK")`
-- `c.JSON(201, struct{}{})`
-- `c.HTML(200, "index.html", data)` (requires [HTMLRenderer](#5-html-templating))
-- `c.Blob(200, "image/png", bytes)`
-- `c.NoContent(204)`
-- `c.Redirect(301, "https://google.com")`
+- `c.String(http.StatusOK, "OK")`
+- `c.JSON(http.StatusCreated, struct{}{})`
+- `c.HTML(http.StatusOK, "index.html", data)` (requires [HTMLRenderer](#5-html-templating))
+- `c.Blob(http.StatusOK, "image/png", bytes)`
+- `c.NoContent(http.StatusNoContent)`
+- `c.Redirect(http.StatusMovedPermanently, "https://example.com")`
 
 ---
 
 ## 3. Error Handling
 
-Handlers in `httpex` return `error`. You don't need to manually check if headers were written or panic internally. 
+Handlers in `httpex` return `error`. You don't need to manually check if headers were written or panic internally.
 
 ```go
 m.Get("/fetch", func(c core.Context) error {
     data, err := db.Load()
     if err != nil {
-        return err 
+        return err
         // Generates: {"error":"Internal Server Error"} (HTTP 500)
+        // Raw error strings are NOT forwarded to the client.
     }
-    return c.JSON(200, data)
+    return c.JSON(http.StatusOK, data)
 })
 ```
 
-If you want a specific status code, return an `HTTPError` from the `errors` package:
+If you want a specific status code, return an `*httperr.HTTPError` from the `pkg/errors` package:
 
 ```go
-import httperrors "github.com/isaacjuwon/httpex/pkg/errors"
+import httperr "github.com/isaacjuwon/httpex/pkg/errors"
 
 if !found {
-    return httperrors.NewHTTPError(http.StatusNotFound, "User missing")
+    return httperr.NewHTTPError(http.StatusNotFound, "User missing")
 }
+```
+
+> **Note:** The package path is `pkg/errors` but the package name is `httperr`.
+> Always import it with an explicit alias to avoid shadowing the stdlib `errors` package.
+
+The `DefaultErrorHandler` uses `errors.As` internally, so wrapped `*HTTPError` values are handled correctly:
+
+```go
+// This works — the 404 is correctly extracted even when wrapped:
+return fmt.Errorf("lookup failed: %w", httperr.NewHTTPError(http.StatusNotFound, "not found"))
 ```
 
 ### 3.1 Custom HTML Error Pages
 
-By default, the `httpex` framework responds with JSON for all errors and 404s. If you are building a server-rendered HTML application, you can easily override this to serve your own custom HTML error templates (like `404.html` and `500.html`).
-
-You do this via the `WithErrorHandler`, `WithNotFound`, and `WithMethodNotAllowed` options in the `mux` package:
-
 ```go
 import (
+    "errors"
     "github.com/isaacjuwon/httpex/pkg/core"
     "github.com/isaacjuwon/httpex/pkg/mux"
     "github.com/isaacjuwon/httpex/pkg/renderer"
-    httperrors "github.com/isaacjuwon/httpex/pkg/errors"
+    httperr "github.com/isaacjuwon/httpex/pkg/errors"
 )
 
 m := mux.New(
     mux.WithRenderer(&renderer.HTMLRenderer{Templates: tmpl}),
-    
-    // Override the default 404 handler
+
     mux.WithNotFound(core.HandlerFunc(func(c core.Context) error {
-        return c.HTML(404, "404.html", nil)
+        return c.HTML(http.StatusNotFound, "404.html", nil)
     })),
-    
-    // Override the global error catcher for 500s and other HTTP errors
+
     mux.WithErrorHandler(func(c core.Context, err error) {
-        // Extract the code (defaults to 500 if it's a standard error)
         code := http.StatusInternalServerError
-        if he, ok := err.(*httperrors.HTTPError); ok {
+        var he *httperr.HTTPError
+        if errors.As(err, &he) { // use errors.As, not type assertion
             code = he.Code
         }
-
-        // Render your custom error template
         _ = c.HTML(code, "error.html", map[string]any{
-            "Code":  code,
-            "Error": err.Error(),
+            "Code": code,
         })
     }),
 )
@@ -184,11 +194,14 @@ users.Get("/", GetUsers)
 users.Get("/:id", GetUserByID)
 ```
 
+> **Important:** Group middleware is applied at **registration time**, not dispatch time.
+> Call `Use()` on a group *before* registering routes on it, or the middleware will not apply.
+
 ---
 
 ## 5. HTML Templating
 
-By default, `httpex` uses the `JSONRenderer`. If you are building a server-side rendered application, inject the `HTMLRenderer` from the `renderer` package:
+By default, `httpex` uses the `JSONRenderer`. For server-rendered HTML, inject the `HTMLRenderer`:
 
 ```go
 import (
@@ -200,45 +213,105 @@ import (
 tmpl := template.Must(template.ParseGlob("views/*.html"))
 
 m := mux.New(
-    mux.WithRenderer(&renderer.HTMLRenderer{
-        Templates: tmpl,
-    }),
+    mux.WithRenderer(&renderer.HTMLRenderer{Templates: tmpl}),
 )
 
 m.Get("/", func(c core.Context) error {
-    // Automatically executes "index.html" with the map data
-    return c.HTML(200, "index.html", map[string]string{
+    return c.HTML(http.StatusOK, "index.html", map[string]string{
         "Title": "Welcome!",
     })
 })
+```
+
+> Template output is buffered before writing the HTTP status code.
+> Template errors yield a proper 500 rather than a partial response.
+
+To enable pretty-printed JSON from the default renderer:
+
+```go
+m := mux.New(
+    mux.WithRenderer(&renderer.JSONRenderer{Indent: true}),
+)
 ```
 
 ---
 
 ## 6. Middlewares
 
-The `pkg/middleware` package provides essential protections. They are highly optimized and secure by default. 
+The `pkg/middleware` package provides essential protections.
 
 ```go
 m.Use(
-    middleware.RequestID(),            // Sets X-Request-Id header
-    middleware.Logging(),              // Structured logs
-    middleware.Recovery(),             // Prevents full server crashes on panic
-    middleware.SecureHeaders(),        // HSTS, XSS protections, framing limits
-    middleware.BodyLimit(2 * 1024 * 1024), // Max 2MB incoming JSON
-    middleware.Timeout(5 * time.Second),   // Context cancellation
-    middleware.CORS(),                 // Flexible Cross-Origin rules
+    middleware.RequestID(),                    // Sets X-Request-Id header
+    middleware.Logging(),                      // Structured slog request logs
+    middleware.Recovery(),                     // Prevents full server crashes on panic
+    middleware.SecureHeaders(),                // HSTS, XSS protections, framing limits
+    middleware.BodyLimit(2 * 1024 * 1024),    // Max 2MB incoming body
+    middleware.Timeout(5 * time.Second),       // Cooperative context cancellation
+    middleware.CORS(),                         // Flexible Cross-Origin rules
 )
+```
+
+### 6.1 Logging Level
+
+`WithLogLevel` accepts a `slog.Level` value directly:
+
+```go
+import "log/slog"
+
+middleware.Logging(
+    middleware.WithLogLevel(slog.LevelDebug),
+)
+```
+
+### 6.2 Timeout — Cooperative Cancellation
+
+The `Timeout` middleware injects a deadline into the request context and checks `ctx.Err()` after the handler returns. Handlers **must** propagate `c.Context()` to any blocking I/O for the timeout to take effect:
+
+```go
+m.Get("/slow", func(c core.Context) error {
+    rows, err := db.QueryContext(c.Context(), "SELECT ...") // ← pass context
+    if err != nil {
+        return err
+    }
+    // ...
+})
 ```
 
 ---
 
-## 7. Configuration & Options
+## 7. Custom Logger
 
-`httpex` is configured explicitly via functional options passed to `mux.New()`. 
+Implement `core.Logger` to wire any structured logger:
+
+```go
+type Logger interface {
+    Info(msg string, attrs ...any)
+    Error(msg string, attrs ...any)
+    Log(ctx context.Context, level slog.Level, msg string, attrs ...any)
+}
+```
+
+A `pkg/logger.SlogAdapter` is provided out of the box:
+
+```go
+import (
+    "log/slog"
+    "github.com/isaacjuwon/httpex/pkg/logger"
+)
+
+l := logger.NewSlogAdapter(slog.Default())
+middleware.Logging(middleware.WithLogger(l))
+```
+
+---
+
+## 8. Configuration & Options
+
+`httpex` is configured explicitly via functional options passed to `mux.New()`.
 
 - `WithRenderer(core.Renderer)`
-- `WithErrorHandler(errors.ErrorHandler)`
+- `WithErrorHandler(httperr.ErrorHandler)`
 - `WithRouter(core.Router)`
 - `WithNotFound(core.Handler)`
 - `WithMethodNotAllowed(core.Handler)`
@@ -247,7 +320,7 @@ m.Use(
 // Custom 404 handler
 m := mux.New(
     mux.WithNotFound(core.HandlerFunc(func(c core.Context) error {
-        return c.JSON(404, map[string]string{"error": "where are you going?"})
+        return c.JSON(http.StatusNotFound, map[string]string{"error": "not found"})
     })),
 )
 ```

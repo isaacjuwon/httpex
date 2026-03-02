@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,7 +19,7 @@ type Option func(*config)
 type config struct {
 	timeout    time.Duration
 	signals    []os.Signal
-	onShutdown []func()
+	onShutdown []func(context.Context)
 	logger     core.Logger
 }
 
@@ -33,7 +34,10 @@ func WithSignals(sigs ...os.Signal) Option {
 }
 
 // WithOnShutdown registers a callback that runs during shutdown.
-func WithOnShutdown(fn func()) Option {
+// The callback receives the shutdown context (with the configured timeout)
+// and all callbacks are executed concurrently. If a callback panics it does
+// not prevent other callbacks or the server shutdown from proceeding.
+func WithOnShutdown(fn func(context.Context)) Option {
 	return func(c *config) { c.onShutdown = append(c.onShutdown, fn) }
 }
 
@@ -80,10 +84,22 @@ func ListenAndServe(srv *http.Server, opts ...Option) error {
 
 	cfg.logger.Info("shutting down server", "timeout", cfg.timeout.String())
 
-	// Run cleanup callbacks
+	// Run cleanup callbacks concurrently, each protected against panics.
+	// All callbacks share the same deadline context.
+	var wg sync.WaitGroup
 	for _, fn := range cfg.onShutdown {
-		fn()
+		wg.Add(1)
+		go func(f func(context.Context)) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					cfg.logger.Error("shutdown callback panicked", "error", r)
+				}
+			}()
+			f(ctx)
+		}(fn)
 	}
+	wg.Wait()
 
 	if err := srv.Shutdown(ctx); err != nil {
 		cfg.logger.Error("shutdown error", "error", err.Error())

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"slices"
 )
@@ -95,16 +96,11 @@ type Renderer interface {
 }
 
 // Logger is the interface for structured logging.
+// attrs must be alternating key-value pairs or [slog.Attr] values,
+// matching the contract of [log/slog].
 type Logger interface {
 	Info(msg string, attrs ...any)
 	Error(msg string, attrs ...any)
-	Log(ctx context.Context, level int, msg string, attrs ...any)
+	// Log logs at an arbitrary slog level.
+	Log(ctx context.Context, level slog.Level, msg string, attrs ...any)
 }
-
-// Log level constants.
-const (
-	LevelDebug = -4
-	LevelInfo  = 0
-	LevelWarn  = 4
-	LevelError = 8
-)

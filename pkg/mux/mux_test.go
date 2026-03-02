@@ -3,6 +3,7 @@ package mux
 import (
 	"bytes"
 	"html/template"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -14,15 +15,15 @@ func TestMuxRouting(t *testing.T) {
 	m := New()
 
 	m.Get("/users", func(c core.Context) error {
-		return c.String(200, "get_users")
+		return c.String(http.StatusOK, "get_users")
 	})
 
 	m.Post("/users", func(c core.Context) error {
-		return c.JSON(201, map[string]string{"status": "created"})
+		return c.JSON(http.StatusCreated, map[string]string{"status": "created"})
 	})
 
 	m.Get("/users/:id", func(c core.Context) error {
-		return c.String(200, c.Param("id"))
+		return c.String(http.StatusOK, c.Param("id"))
 	})
 
 	// Test GET /users
@@ -30,8 +31,8 @@ func TestMuxRouting(t *testing.T) {
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Body.String() != "get_users" {
 		t.Errorf("expected get_users, got %s", rec.Body.String())
@@ -42,8 +43,8 @@ func TestMuxRouting(t *testing.T) {
 	rec = httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Body.String() != "123" {
 		t.Errorf("expected 123, got %s", rec.Body.String())
@@ -54,8 +55,8 @@ func TestMuxRouting(t *testing.T) {
 	rec = httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 404 {
-		t.Errorf("expected 404, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected %d, got %d", http.StatusNotFound, rec.Code)
 	}
 
 	// Test 405 (Method Not Allowed)
@@ -63,8 +64,8 @@ func TestMuxRouting(t *testing.T) {
 	rec = httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 405 {
-		t.Errorf("expected 405, got %d", rec.Code)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected %d, got %d", http.StatusMethodNotAllowed, rec.Code)
 	}
 }
 
@@ -95,7 +96,7 @@ func TestMuxMiddleware(t *testing.T) {
 
 	m.Get("/test", func(c core.Context) error {
 		order = append(order, "handler")
-		return c.NoContent(200)
+		return c.NoContent(http.StatusOK)
 	})
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -120,15 +121,15 @@ func TestGroup(t *testing.T) {
 	v1 := api.Group("/v1")
 
 	v1.Get("/status", func(c core.Context) error {
-		return c.String(200, "ok")
+		return c.String(http.StatusOK, "ok")
 	})
 
 	req := httptest.NewRequest("GET", "/api/v1/status", nil)
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Body.String() != "ok" {
 		t.Errorf("expected ok, got %s", rec.Body.String())
@@ -144,7 +145,7 @@ func TestContextBinding(t *testing.T) {
 		if err := c.Bind(&payload); err != nil {
 			return err
 		}
-		return c.JSON(200, payload)
+		return c.JSON(http.StatusOK, payload)
 	})
 
 	body := bytes.NewBufferString(`{"message": "hello"}`)
@@ -154,8 +155,8 @@ func TestContextBinding(t *testing.T) {
 
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Body.String() != `{"message":"hello"}`+"\n" {
 		t.Errorf("expected JSON response, got %s", rec.Body.String())
@@ -174,7 +175,7 @@ func TestContextGenericBind(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return c.JSON(200, payment)
+		return c.JSON(http.StatusOK, payment)
 	})
 
 	body := bytes.NewBufferString(`{"amount": 500}`)
@@ -184,8 +185,8 @@ func TestContextGenericBind(t *testing.T) {
 
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Body.String() != `{"amount":500}`+"\n" {
 		t.Errorf("expected JSON response, got %s", rec.Body.String())
@@ -210,17 +211,17 @@ func TestContextGenericValue(t *testing.T) {
 		// Type-safe retrieval without type assertion!
 		user, ok := Value[User](c, "user")
 		if !ok {
-			return c.String(500, "user not found or invalid type")
+			return c.String(http.StatusInternalServerError, "user not found or invalid type")
 		}
-		return c.String(200, user.ID)
+		return c.String(http.StatusOK, user.ID)
 	})
 
 	req := httptest.NewRequest("GET", "/me", nil)
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Body.String() != "usr_123" {
 		t.Errorf("expected usr_123, got %s", rec.Body.String())
@@ -238,18 +239,18 @@ func TestHTMLRenderer(t *testing.T) {
 	m := New(WithRenderer(hr))
 
 	m.Get("/html", func(c core.Context) error {
-		return c.HTML(200, "index", struct{ Name string }{"httpex"})
+		return c.HTML(http.StatusOK, "index", struct{ Name string }{"httpex"})
 	})
 
 	req := httptest.NewRequest("GET", "/html", nil)
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 
-	if rec.Code != 200 {
-		t.Errorf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, rec.Code)
 	}
 	if rec.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Errorf("expected text/html content type")
+		t.Errorf("expected text/html content type, got %s", rec.Header().Get("Content-Type"))
 	}
 	if rec.Body.String() != `<html><body>Hello httpex!</body></html>` {
 		t.Errorf("expected HTML output, got %s", rec.Body.String())

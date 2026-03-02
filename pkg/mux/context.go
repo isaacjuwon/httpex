@@ -1,16 +1,18 @@
 package mux
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/isaacjuwon/httpex/pkg/core"
-	"github.com/isaacjuwon/httpex/pkg/errors"
+	httperr "github.com/isaacjuwon/httpex/pkg/errors"
 	"github.com/isaacjuwon/httpex/pkg/renderer"
 )
 
@@ -18,19 +20,26 @@ import (
 type contextImpl struct {
 	req      *http.Request
 	resp     http.ResponseWriter
+	ctx      context.Context // stored separately to avoid repeated req.WithContext allocations
 	renderer core.Renderer
 	params   core.Params
 	store    map[string]any
 	written  bool
-	pool     *sync.Pool
+
+	// queryOnce guards lazy parsing of URL query parameters.
+	queryOnce sync.Once
+	queryVals url.Values
 }
 
 func (c *contextImpl) reset(w http.ResponseWriter, r *http.Request, rnd core.Renderer) {
 	c.req = r
 	c.resp = w
+	c.ctx = r.Context() // seed from the incoming request context
 	c.renderer = rnd
 	c.params = c.params[:0]
 	c.written = false
+	c.queryOnce = sync.Once{}
+	c.queryVals = nil
 	clear(c.store)
 }
 
@@ -42,8 +51,11 @@ func (c *contextImpl) SetParams(ps core.Params) {
 	c.params = ps
 }
 
+// Query returns the first value for the named query parameter.
+// The URL query string is parsed only once per request.
 func (c *contextImpl) Query(name string) string {
-	return c.req.URL.Query().Get(name)
+	c.queryOnce.Do(func() { c.queryVals = c.req.URL.Query() })
+	return c.queryVals.Get(name)
 }
 
 func (c *contextImpl) QueryDefault(name, fallback string) string {
@@ -59,11 +71,11 @@ func (c *contextImpl) Header(key string) string {
 
 func (c *contextImpl) Bind(v any) error {
 	if c.req.Body == nil {
-		return errors.NewHTTPError(http.StatusBadRequest, "missing request body")
+		return httperr.NewHTTPError(http.StatusBadRequest, "missing request body")
 	}
 	defer c.req.Body.Close()
 	if err := json.NewDecoder(c.req.Body).Decode(v); err != nil {
-		return errors.NewHTTPError(http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return httperr.NewHTTPError(http.StatusBadRequest, "invalid JSON: "+err.Error())
 	}
 	return nil
 }
@@ -101,7 +113,7 @@ func (c *contextImpl) HTML(code int, name string, data any) error {
 	if hr, ok := renderer.IsHTML(c.renderer); ok {
 		return hr.RenderName(c, code, name, data)
 	}
-	return errors.NewHTTPError(http.StatusInternalServerError, "HTML rendering requires an HTMLRenderer")
+	return httperr.NewHTTPError(http.StatusInternalServerError, "HTML rendering requires an HTMLRenderer")
 }
 
 func (c *contextImpl) Render(code int, data any) error {
@@ -110,7 +122,7 @@ func (c *contextImpl) Render(code int, data any) error {
 
 func (c *contextImpl) Redirect(code int, url string) error {
 	if code < 300 || code > 308 {
-		return errors.NewHTTPError(http.StatusInternalServerError, "invalid redirect code")
+		return httperr.NewHTTPError(http.StatusInternalServerError, "invalid redirect code")
 	}
 	http.Redirect(c.resp, c.req, url, code)
 	c.written = true
@@ -166,12 +178,16 @@ func (c *contextImpl) Method() string {
 	return c.req.Method
 }
 
+// Context returns the per-request context. It is seeded from the incoming
+// request and may be replaced by middleware via [SetContext].
 func (c *contextImpl) Context() context.Context {
-	return c.req.Context()
+	return c.ctx
 }
 
+// SetContext replaces the per-request context without allocating a new
+// *http.Request (unlike req.WithContext).
 func (c *contextImpl) SetContext(ctx context.Context) {
-	c.req = c.req.WithContext(ctx)
+	c.ctx = ctx
 }
 
 func (c *contextImpl) Request() *http.Request {
@@ -211,3 +227,6 @@ func MustValue[T any](c core.Context, key string) T {
 	}
 	return v
 }
+
+// htmlBufPool reuses byte buffers for HTML template rendering.
+var htmlBufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}

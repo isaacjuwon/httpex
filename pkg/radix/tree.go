@@ -242,7 +242,7 @@ func (t *Tree[T]) Has(path string) bool {
 
 func (t *Tree[T]) has(n *node[T], path string) bool {
 	if path == "" {
-		return n.handlers != nil && len(n.handlers) > 0
+		return len(n.handlers) > 0
 	}
 	for _, child := range n.children {
 		switch child.ntype {
@@ -263,7 +263,7 @@ func (t *Tree[T]) has(n *node[T], path string) bool {
 				}
 			}
 		case catchAll:
-			return child.handlers != nil && len(child.handlers) > 0
+			return len(child.handlers) > 0
 		}
 	}
 	return false

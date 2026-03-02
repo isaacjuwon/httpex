@@ -6,7 +6,7 @@ import (
 	"runtime"
 
 	"github.com/isaacjuwon/httpex/pkg/core"
-	"github.com/isaacjuwon/httpex/pkg/errors"
+	httperr "github.com/isaacjuwon/httpex/pkg/errors"
 	"github.com/isaacjuwon/httpex/pkg/logger"
 )
 
@@ -66,7 +66,7 @@ func (m *recoveryMiddleware) Wrap(next core.Handler) core.Handler {
 					"path", c.Path(),
 				)
 
-				returnErr = errors.NewHTTPError(
+				returnErr = httperr.NewHTTPError(
 					http.StatusInternalServerError,
 					"Internal Server Error",
 				)

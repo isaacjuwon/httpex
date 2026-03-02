@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/isaacjuwon/httpex/pkg/core"
-	"github.com/isaacjuwon/httpex/pkg/errors"
+	httperr "github.com/isaacjuwon/httpex/pkg/errors"
 )
 
 // ----- Timeout Middleware -----
@@ -34,7 +34,18 @@ type timeoutMiddleware struct {
 	cfg      timeoutConfig
 }
 
-// Timeout returns a [core.Middleware] that cancels the request context.
+// Timeout returns a [core.Middleware] that cancels the request context after d.
+//
+// # Cooperative Cancellation
+//
+// This middleware replaces the per-request context with a timed-out version
+// and checks ctx.Err() after the handler returns. For the timeout to be
+// enforced, handlers and downstream middleware must respect ctx cancellation
+// (e.g. pass ctx to database calls, HTTP clients, etc.).
+//
+// A goroutine-per-request approach is intentionally avoided here because it
+// creates a data race with the pooled [core.Context]: the pool can recycle the
+// context before the goroutine finishes reading from it.
 func Timeout(d time.Duration, opts ...TimeoutOption) core.Middleware {
 	cfg := timeoutConfig{
 		message: "Request Timeout",
@@ -53,16 +64,13 @@ func (m *timeoutMiddleware) Wrap(next core.Handler) core.Handler {
 
 		c.SetContext(ctx)
 
-		done := make(chan error, 1)
-		go func() {
-			done <- next.ServeHTTPX(c)
-		}()
+		err := next.ServeHTTPX(c)
 
-		select {
-		case err := <-done:
-			return err
-		case <-ctx.Done():
-			return errors.NewHTTPError(m.cfg.code, m.cfg.message)
+		// If the context deadline was exceeded, return a timeout error regardless
+		// of what the handler returned (it may have returned nil or a partial error).
+		if ctx.Err() != nil {
+			return httperr.NewHTTPError(m.cfg.code, m.cfg.message)
 		}
+		return err
 	})
 }
