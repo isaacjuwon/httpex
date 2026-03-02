@@ -31,9 +31,7 @@ func (c *contextImpl) reset(w http.ResponseWriter, r *http.Request, rnd core.Ren
 	c.renderer = rnd
 	c.params = c.params[:0]
 	c.written = false
-	for k := range c.store {
-		delete(c.store, k)
-	}
+	clear(c.store)
 }
 
 func (c *contextImpl) Param(name string) string {

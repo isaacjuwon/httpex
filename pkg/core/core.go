@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"net/http"
+	"slices"
 )
 
 // Handler processes an HTTP request through a [Context] and returns an error.
@@ -75,10 +76,8 @@ type Param struct {
 
 // Get returns the value of the named parameter, or an empty string.
 func (ps Params) Get(name string) string {
-	for _, p := range ps {
-		if p.Key == name {
-			return p.Value
-		}
+	if i := slices.IndexFunc(ps, func(p Param) bool { return p.Key == name }); i >= 0 {
+		return ps[i].Value
 	}
 	return ""
 }

@@ -1,6 +1,9 @@
 package radix
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Param represents a matched path parameter.
 type Param struct {
@@ -13,10 +16,8 @@ type Params []Param
 
 // Get returns the value of the named parameter, or an empty string.
 func (ps Params) Get(name string) string {
-	for _, p := range ps {
-		if p.Key == name {
-			return p.Value
-		}
+	if i := slices.IndexFunc(ps, func(p Param) bool { return p.Key == name }); i >= 0 {
+		return ps[i].Value
 	}
 	return ""
 }
@@ -33,7 +34,7 @@ type node[T any] struct {
 	prefix   string
 	children []*node[T]
 	ntype    nodeType
-	paramKey string 
+	paramKey string
 	handlers map[string]T // HTTP method → handler (strong generic type)
 }
 
@@ -132,11 +133,11 @@ func (t *Tree[T]) addParamChild(n *node[T], method, path string, handler T) {
 		rest = path[end:]
 	}
 
-	for _, child := range n.children {
-		if child.ntype == param && child.paramKey == paramName {
-			t.addRoute(child, method, rest, handler)
-			return
-		}
+	if i := slices.IndexFunc(n.children, func(child *node[T]) bool {
+		return child.ntype == param && child.paramKey == paramName
+	}); i >= 0 {
+		t.addRoute(n.children[i], method, rest, handler)
+		return
 	}
 
 	child := &node[T]{
@@ -282,10 +283,5 @@ func longestCommonPrefix(a, b string) int {
 }
 
 func indexOfParamOrWildcard(path string) int {
-	for i := 0; i < len(path); i++ {
-		if path[i] == ':' || path[i] == '*' {
-			return i
-		}
-	}
-	return -1
+	return strings.IndexAny(path, ":*")
 }

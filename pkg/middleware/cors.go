@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -85,13 +86,7 @@ func (m *corsMiddleware) Wrap(next core.Handler) core.Handler {
 		}
 
 		// Check if origin is allowed
-		allowed := false
-		for _, o := range m.cfg.allowOrigins {
-			if o == "*" || o == origin {
-				allowed = true
-				break
-			}
-		}
+		allowed := slices.Contains(m.cfg.allowOrigins, "*") || slices.Contains(m.cfg.allowOrigins, origin)
 		if !allowed {
 			return next.ServeHTTPX(c)
 		}
